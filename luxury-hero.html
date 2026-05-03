@@ -443,49 +443,54 @@
   });
 
   // Loader state — hidden once the splat is parsed and the viewer is running.
-  const loaderEl = document.getElementById('lxh-loader');
+  // Belt-and-suspenders dismissal so we never get stuck on the spinner:
+  //   1. dismiss as soon as viewer.start() resolves (the happy path)
+  //   2. dismiss on any catch after we exit the load section
+  //   3. dismiss on a 30s safety timeout regardless
+  // and we use a "dismissed" guard so multiple paths can call it safely.
+  const loaderEl  = document.getElementById('lxh-loader');
   const loaderSub = document.getElementById('lxh-loader-sub');
+  let loaderDismissed = false;
   function setLoaderProgress(pct) {
     if (loaderSub) loaderSub.textContent = pct >= 100 ? 'Almost there' : (pct + '%');
   }
   function dismissLoader() {
+    if (loaderDismissed) return;
+    loaderDismissed = true;
     if (loaderEl) loaderEl.classList.add('is-off');
   }
+  // Safety net: never let the loader stick for more than 30s.
+  const LOADER_SAFETY_MS = 30000;
+  setTimeout(dismissLoader, LOADER_SAFETY_MS);
 
-  // We can't always rely on a progress callback in addSplatScene, so we drive
-  // a manual byte-progress preflight via fetch+ReadableStream and then hand
-  // the bytes to the viewer. Falls back to direct addSplatScene if streaming
-  // isn't supported.
-  async function loadPlyWithProgress(url) {
-    const resp = await fetch(url, { cache: 'no-store' });
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    const total = parseInt(resp.headers.get('Content-Length') || '0', 10);
-    const reader = resp.body.getReader();
-    const chunks = [];
-    let received = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      received += value.length;
-      if (total) setLoaderProgress(Math.min(99, Math.floor(received * 100 / total)));
-    }
-    setLoaderProgress(100);
-    // Reassemble the bytes and hand a blob URL to the viewer
-    const blob  = new Blob(chunks, { type: 'application/octet-stream' });
-    return URL.createObjectURL(blob);
+  // Optional byte-progress preflight: fetch the .ply ourselves to drive the %
+  // counter, then point the viewer at the SAME URL (it'll get a 200 from the
+  // browser cache instead of a second download). If the preflight fails for
+  // any reason, we just skip the % counter and show "Loading" — the viewer
+  // does its own fetch.
+  async function preflightProgress(url) {
+    try {
+      const resp = await fetch(url, { cache: 'force-cache' });
+      if (!resp.ok || !resp.body) return;
+      const total = parseInt(resp.headers.get('Content-Length') || '0', 10);
+      const reader = resp.body.getReader();
+      let received = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received += value.length;
+        if (total) setLoaderProgress(Math.min(99, Math.floor(received * 100 / total)));
+      }
+      setLoaderProgress(100);
+    } catch (_) { /* no-op */ }
   }
 
   let splatLoaded = false;
   async function tryLoad(url) {
-    let blobUrl = null;
-    try {
-      blobUrl = await loadPlyWithProgress(url);
-    } catch (e) {
-      // fall back to letting the viewer fetch directly
-      blobUrl = url;
-    }
-    await viewer.addSplatScene(blobUrl, {
+    // Fire the byte-progress preflight in the background; don't await — the
+    // viewer's own fetch happens in parallel and either races or hits cache.
+    preflightProgress(url);
+    await viewer.addSplatScene(url, {
       showLoadingUI: false,
       progressiveLoad: true,
       splatAlphaRemovalThreshold: 5,
@@ -503,7 +508,8 @@
       console.warn('[lxh] no splat available:', e2);
     }
   }
-  // Give the viewer one frame to paint, then fade out the loader.
+  // Whether the splat loaded or not, we're done with the loading screen.
+  // Give the viewer one paint frame to land, then fade out.
   requestAnimationFrame(() => requestAnimationFrame(dismissLoader));
 
   // --------------------------- 3. Camera orbit ----------------------------
