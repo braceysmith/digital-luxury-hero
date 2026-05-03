@@ -1,0 +1,708 @@
+<!--
+  ==========================================================================
+  A NEW ERA OF LUXURY — Interactive Hero (Splat + Surface Point-Cloud Edition)
+  --------------------------------------------------------------------------
+  This drops into a Squarespace Code Block. Self-contained: HTML + CSS + JS.
+
+  WHAT CHANGED FROM v1
+    * Photoreal Gaussian splat is now the only "hero" surface — the procedural
+      rotating cube has been retired now that the Meshy/Postshot pipeline
+      produces a real-looking home.
+    * Detail dots are no longer placed on cube faces. They are loaded from
+      points.json, which is a SURFACE POINT CLOUD sampled directly off the
+      Meshy mesh in Blender. Each point has a 3D world position + normal.
+    * Every animation frame we project each point through the SAME Three.js
+      camera the splat is rendered with. That guarantees the dots stay
+      pixel-locked to the rotating splat — they cannot drift.
+    * Hover behavior: the dot nearest the cursor "focuses" (scales up + label
+      appears + detail panel fades in). Neighboring dots push gently outward
+      so the focused dot has visual breathing room.
+
+  EXPECTED ASSETS in the same folder as this HTML:
+    chalet_v2.ply   — Postshot-trained Gaussian splat
+    points.json     — surface point cloud (written by process_meshy_v2.py)
+  Both are loaded by relative URL — no build step.
+  ==========================================================================
+-->
+<style>
+  :root {
+    --lxh-navy:    #1a2847;
+    --lxh-orange:  #ff6b35;
+    --lxh-white:   #ffffff;
+    --lxh-cream:   #faf7f2;
+    --lxh-radius:  95px;      /* reveal-hole outer radius */
+    --lxh-feather: 10px;      /* width of soft falloff zone — sharper edge per Bracey's request */
+  }
+
+  .lxh-hero {
+    position: relative;
+    width: 100%;
+    height: 100vh;
+    min-height: 600px;
+    background: var(--lxh-cream);
+    overflow: hidden;
+    font-family: 'Helvetica Neue', 'Inter', Arial, sans-serif;
+    color: var(--lxh-navy);
+    user-select: none;
+  }
+  .lxh-hero, .lxh-hero * { box-sizing: border-box; }
+
+  .lxh-stage {
+    position: absolute; inset: 0;
+    cursor: none;             /* we draw our own reveal ring */
+  }
+
+  /* Three layers, bottom-to-top:
+       1. splat canvas  — always fully visible (the base "house" layer)
+       2. cream occluder — a div that's opaque cream INSIDE the cursor circle
+          and transparent outside. Sits above the splat and "punches out" the
+          splat only where the cursor is, so on load you see the splat
+          everywhere and as you hover, the house disappears in a small disc
+          near the cursor.
+       3. dot cloud — masked so dots are visible ONLY inside the cursor
+          circle, drawn over the cream-occluded zone.
+  */
+
+  /* --- LAYER 1: splat — always solid, no masks --- */
+  .lxh-splat-wrap {
+    position: absolute; inset: 0;
+    z-index: 1;
+    pointer-events: none;
+  }
+  .lxh-splat-canvas {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    border: 0; background: transparent;
+    display: block;
+    pointer-events: none;
+  }
+
+  /* --- LAYER 2: cream occluder — radial gradient cream-inside / transparent-
+         outside. With the cursor offscreen (default state, --mx -500px), the
+         radial gradient is centered offscreen so the on-screen area is
+         entirely outside the radius -> fully transparent -> splat unblocked.
+         As the cursor moves over the stage, a small cream disc follows it
+         and visually "erases" the splat inside that disc. --- */
+  .lxh-occluder {
+    position: absolute; inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    background:
+      radial-gradient(circle var(--lxh-radius) at var(--mx, -500px) var(--my, -500px),
+        var(--lxh-cream) 0,
+        var(--lxh-cream) calc(var(--lxh-radius) - var(--lxh-feather)),
+        transparent var(--lxh-radius));
+  }
+
+  /* --- LAYER 3: dot cloud — visible only inside the cursor circle --- */
+  .lxh-dots {
+    position: absolute; inset: 0;
+    pointer-events: none;
+    z-index: 3;
+    -webkit-mask-image:
+      radial-gradient(circle var(--lxh-radius) at var(--mx, -500px) var(--my, -500px),
+        #000 0,
+        #000 calc(var(--lxh-radius) - var(--lxh-feather)),
+        transparent var(--lxh-radius));
+    mask-image:
+      radial-gradient(circle var(--lxh-radius) at var(--mx, -500px) var(--my, -500px),
+        #000 0,
+        #000 calc(var(--lxh-radius) - var(--lxh-feather)),
+        transparent var(--lxh-radius));
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+  }
+
+  /* --- LAYER 3: cursor reveal ring (visual indicator of the hole) --- */
+  .lxh-cursor {
+    position: absolute;
+    z-index: 4;
+    width: calc(var(--lxh-radius) * 2);
+    height: calc(var(--lxh-radius) * 2);
+    border: 1px solid rgba(26, 40, 71, 0.35);
+    border-radius: 50%;
+    pointer-events: none;
+    transform: translate(-50%, -50%);
+    left: var(--mx, -500px);
+    top: var(--my, -500px);
+    opacity: 0;
+    transition: opacity 280ms ease;
+  }
+  .lxh-cursor::after {
+    content: '';
+    position: absolute;
+    inset: 50% auto auto 50%;
+    width: 4px; height: 4px;
+    margin: -2px 0 0 -2px;
+    background: var(--lxh-orange);
+    border-radius: 50%;
+  }
+  .lxh-cursor.is-on { opacity: 1; }
+  .lxh-dot {
+    position: absolute;
+    width: 0; height: 0;          /* dot is centered on (left,top) */
+    transform: translate(-50%, -50%);
+    will-change: left, top, opacity;
+    pointer-events: none;
+  }
+  .lxh-dot__pip {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 4px; height: 4px;
+    margin: -2px 0 0 -2px;
+    border-radius: 50%;
+    background: var(--lxh-orange);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.6), 0 0 6px rgba(255,107,53,0.4);
+    transition: width 220ms cubic-bezier(.2,.7,.2,1.4),
+                height 220ms cubic-bezier(.2,.7,.2,1.4),
+                margin 220ms cubic-bezier(.2,.7,.2,1.4),
+                box-shadow 220ms ease;
+  }
+  .lxh-dot.is-hidden { opacity: 0; visibility: hidden; }
+  .lxh-dot.is-faded  { opacity: 0.45; }
+  .lxh-dot.is-focus .lxh-dot__pip {
+    width: 14px; height: 14px;
+    margin: -7px 0 0 -7px;
+    box-shadow: 0 0 0 2px rgba(255,255,255,0.9), 0 0 18px rgba(255,107,53,0.65);
+  }
+  .lxh-dot__label {
+    /* Center the label horizontally above the pip. translate(-50%) pulls it
+       back by half its own width regardless of label length, so labels of
+       different lengths all line up over their dot. */
+    position: absolute;
+    left: 50%;
+    bottom: 14px;            /* sit ~14px above the center of the pip */
+    transform: translate(-50%, 6px);   /* slight slide-up animation when focused */
+    white-space: nowrap;
+    text-align: center;
+    color: var(--lxh-navy);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1.6px;
+    text-transform: uppercase;
+    opacity: 0;
+    transition: opacity 200ms ease, transform 200ms ease;
+    pointer-events: none;
+  }
+  .lxh-dot.is-focus .lxh-dot__label {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+
+  /* --- detail panel that follows the focused dot (or floats top-right) --- */
+  .lxh-detail {
+    position: absolute;
+    z-index: 4;
+    top: 8vh;
+    right: 5vw;
+    max-width: 320px;
+    pointer-events: none;
+    color: var(--lxh-navy);
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 240ms ease, transform 240ms ease;
+  }
+  .lxh-detail.is-on { opacity: 1; transform: translateY(0); }
+  .lxh-detail__eyebrow {
+    font-size: 10px; letter-spacing: 3px; text-transform: uppercase;
+    color: var(--lxh-orange);
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .lxh-detail__title {
+    font-family: 'Cormorant Garamond', 'Playfair Display', 'Didot', Georgia, serif;
+    font-style: italic;
+    font-weight: 400;
+    font-size: 32px;
+    line-height: 1.1;
+    margin: 0 0 10px;
+  }
+  .lxh-detail__body {
+    font-size: 13px;
+    line-height: 1.55;
+    margin: 0;
+    color: rgba(26,40,71,0.78);
+  }
+
+  /* --- headline --- */
+  .lxh-headline {
+    position: absolute;
+    z-index: 5;
+    top: 6vh;
+    left: 5vw;
+    pointer-events: none;
+    color: var(--lxh-navy);
+    font-family: 'Cormorant Garamond', 'Playfair Display', 'Didot', Georgia, serif;
+    font-weight: 300;
+    font-style: italic;
+    font-size: clamp(30px, 4.6vw, 64px);
+    line-height: 1.05;
+    letter-spacing: 0.5px;
+    margin: 0;
+  }
+  .lxh-headline em { font-style: italic; font-weight: 400; }
+  .lxh-eyebrow {
+    display: block;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-style: normal;
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: var(--lxh-orange);
+    margin-bottom: 14px;
+  }
+
+  .lxh-hint {
+    position: absolute; z-index: 5;
+    bottom: 5vh; left: 50%;
+    transform: translateX(-50%);
+    color: var(--lxh-navy);
+    font-size: 11px; letter-spacing: 3px;
+    text-transform: uppercase;
+    opacity: 0.55;
+    transition: opacity 600ms ease;
+    pointer-events: none;
+  }
+  .lxh-hint.is-off { opacity: 0; }
+
+  @media (max-width: 720px) {
+    .lxh-headline { top: 4vh; left: 6vw; right: 6vw; font-size: 30px; }
+    .lxh-eyebrow  { font-size: 10px; letter-spacing: 3px; }
+    .lxh-detail   { top: auto; bottom: 12vh; right: 6vw; left: 6vw; max-width: none; }
+    .lxh-detail__title { font-size: 22px; }
+  }
+</style>
+
+<section class="lxh-hero" id="lxh-hero" aria-label="A New Era of Luxury">
+  <h1 class="lxh-headline">
+    <span class="lxh-eyebrow">Every Detail Considered</span>
+    A New Era of <em>Luxury</em>
+  </h1>
+
+  <div class="lxh-stage" id="lxh-stage">
+    <!-- LAYER 1: splat — always fully visible (the house) -->
+    <div class="lxh-splat-wrap" id="lxh-splat-wrap">
+      <canvas
+        id="lxh-splat-canvas"
+        class="lxh-splat-canvas"
+        aria-label="Photorealistic luxury home — Gaussian splat"></canvas>
+    </div>
+    <!-- LAYER 2: cream occluder — only visible (cream) inside the cursor disc,
+         erasing the splat there. Transparent everywhere else. -->
+    <div class="lxh-occluder" id="lxh-occluder"></div>
+    <!-- LAYER 3: dot cloud — visible only inside the cursor disc -->
+    <div class="lxh-dots" id="lxh-dots"></div>
+    <!-- LAYER 4: cursor reveal ring (decorative) -->
+    <div class="lxh-cursor" id="lxh-cursor"></div>
+  </div>
+
+  <aside class="lxh-detail" id="lxh-detail" aria-live="polite">
+    <div class="lxh-detail__eyebrow" id="lxh-detail-eyebrow">Detail</div>
+    <h2 class="lxh-detail__title" id="lxh-detail-title">—</h2>
+    <p class="lxh-detail__body"  id="lxh-detail-body">Hover the home to inspect.</p>
+  </aside>
+
+  <div class="lxh-hint" id="lxh-hint">Move · over · the · home · to · inspect</div>
+</section>
+
+<script type="module">
+(async function bootSplatHero(){
+  'use strict';
+
+  const stage   = document.getElementById('lxh-stage');
+  const canvas  = document.getElementById('lxh-splat-canvas');
+  const splatWrap = document.getElementById('lxh-splat-wrap');
+  const cursor   = document.getElementById('lxh-cursor');
+  const dotsEl  = document.getElementById('lxh-dots');
+  const detail  = document.getElementById('lxh-detail');
+  const dtEye   = document.getElementById('lxh-detail-eyebrow');
+  const dtTitle = document.getElementById('lxh-detail-title');
+  const dtBody  = document.getElementById('lxh-detail-body');
+  const hint    = document.getElementById('lxh-hint');
+  if (!stage || !canvas) return;
+
+  // --------------------------- 1. Imports & boot ---------------------------
+  let THREE, GaussianSplats3D;
+  try {
+    THREE            = await import('https://esm.sh/three@0.160.0');
+    GaussianSplats3D = await import('https://esm.sh/@mkkellogg/gaussian-splats-3d@0.4.7');
+  } catch (e) {
+    console.warn('[lxh] ESM import failed:', e);
+    return;
+  }
+
+  function fit() {
+    const r = canvas.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width  = Math.round(r.width  * dpr);
+    canvas.height = Math.round(r.height * dpr);
+  }
+  fit();
+  window.addEventListener('resize', fit);
+
+  // --------------------------- 2. Splat viewer ----------------------------
+  const viewer = new GaussianSplats3D.Viewer({
+    selfDrivenMode: true,
+    useBuiltInControls: false,
+    rootElement: stage,
+    canvas: canvas,
+    cameraUp: [0, 0, 1],                 // Blender Z-up coordinate frame
+    initialCameraPosition: [14, 0, 6],
+    initialCameraLookAt: [0, 0, 3],
+    sphericalHarmonicsDegree: 2,
+    antialiased: true,
+    sharedMemoryForWorkers: false,
+  });
+
+  let splatLoaded = false;
+  try {
+    await viewer.addSplatScene('./chalet_v2.ply', {
+      showLoadingUI: false,
+      progressiveLoad: true,
+      splatAlphaRemovalThreshold: 5,
+    });
+    viewer.start();
+    splatLoaded = true;
+  } catch (e) {
+    console.warn('[lxh] chalet_v2.ply not loaded yet — falling back to chalet.ply if present:', e);
+    try {
+      await viewer.addSplatScene('./chalet.ply', {
+        showLoadingUI: false, progressiveLoad: true, splatAlphaRemovalThreshold: 5
+      });
+      viewer.start();
+      splatLoaded = true;
+    } catch (e2) {
+      console.warn('[lxh] no splat available; dots will still rotate over the cream backdrop:', e2);
+    }
+  }
+
+  // --------------------------- 3. Camera orbit ----------------------------
+  // Orbit parameters MUST stay in lockstep with how the dots are projected.
+  // Both the splat camera and the dot projection use this same camera obj.
+  const cam = viewer.camera;
+  const lookAt = new THREE.Vector3(0, 0, 3);   // overridden once points.json loads
+  const orbit = {
+    radius: 9,                      // closer to the home (was 14 — Bracey wanted bigger)
+    h_min:  3.0,
+    h_max:  7.5,
+    speed:  0.078,                  // rad/sec — slow, cinematic
+  };
+  // We multiply the cloud's render-time orbit radius by this to shrink the
+  // viewing distance independent of how the splat was trained.
+  const RADIUS_SCALE_ON_SITE = 9 / 14;
+
+  // --------------------------- 4. Load point cloud ------------------------
+  let cloud = null;     // { points: [{p,n,region,label,id}], size, look_height, ... }
+  try {
+    const r = await fetch('./points.json', { cache: 'no-store' });
+    if (r.ok) {
+      cloud = await r.json();
+      // Use the cloud's own metadata to refine orbit / lookAt
+      if (cloud.look_height) lookAt.set(0, 0, cloud.look_height);
+      if (cloud.orbit_radius) orbit.radius = cloud.orbit_radius * RADIUS_SCALE_ON_SITE;
+      if (cloud.size) {
+        orbit.h_min = cloud.size[2] * 0.35;
+        orbit.h_max = cloud.size[2] * 0.95;
+      }
+      console.log(`[lxh] loaded ${cloud.points.length} surface points`);
+    } else {
+      console.warn('[lxh] points.json not found, dots disabled');
+    }
+  } catch (e) {
+    console.warn('[lxh] points.json fetch failed:', e);
+  }
+
+  // --------------------------- 5. Detail descriptions library --------------
+  // For now, region-based default copy. Replace with bespoke per-id copy in
+  // points.json by adding a "desc" field to each point and we'll prefer it.
+  const REGION_COPY = {
+    front:  ['Glazing & Threshold',  'Bronze-framed triple pane glass, smart-tinted, with an acoustic seal that lets the light in and the city out.'],
+    back:   ['Service & Systems',    'Cedar rainscreen on the exterior; spray-foam insulated cavities; smart panel, battery and inverter quietly stacked behind.'],
+    right:  ['Marble Cladding',      'Bookmatched calacatta panels, hand-set with brass anchors and shadow-gap reveals — every joint a deliberate line.'],
+    left:   ['Drystack Stone',       'Hand-cut quarried boulders, drystack laid by mason — every face cleft, no two stones the same.'],
+    top:    ['Roofline & Drainage',  'Standing-seam copper, snow guards, hidden gutter — designed to age into a green patina over the next decade.'],
+    bottom: ['Foundation & Site',    'Engineered slab on helical piers, French drain, radon mitigation, geo-thermal loop tied into the ground source.'],
+  };
+  function copyFor(point) {
+    if (point && point.desc) return ['Detail', point.desc];
+    const r = (point && point.region) || 'front';
+    return REGION_COPY[r] || REGION_COPY.front;
+  }
+
+  // --------------------------- 6. Build dot DOM ---------------------------
+  let dots = [];   // [{p:Vec3, n:Vec3, label, region, el, pipEl, screen:{x,y}, ox, oy, oxT, oyT, visible}]
+  if (cloud && Array.isArray(cloud.points)) {
+    cloud.points.forEach((pt) => {
+      const el  = document.createElement('div');
+      el.className = 'lxh-dot is-hidden';
+      el.innerHTML = '<div class="lxh-dot__pip"></div><div class="lxh-dot__label">' +
+                     (pt.label || 'Detail') + '</div>';
+      dotsEl.appendChild(el);
+      dots.push({
+        id:     pt.id,
+        p:      new THREE.Vector3(pt.p[0], pt.p[1], pt.p[2]),
+        n:      new THREE.Vector3(pt.n[0], pt.n[1], pt.n[2]),
+        region: pt.region,
+        label:  pt.label,
+        desc:   pt.desc,
+        el, pipEl: el.querySelector('.lxh-dot__pip'),
+        ox: 0, oy: 0, oxT: 0, oyT: 0,    // current/target hover-repulsion offset
+        visible: false,
+        sx: 0, sy: 0, depth: 0,
+      });
+    });
+  }
+
+  // --------------------------- 7. Animation ------------------------------
+  const t0 = performance.now();
+  let mx = -9999, my = -9999, mActive = false;
+  let focusedId = -1;
+  const HIT_RADIUS_PX     = 36;     // distance from cursor to focus a dot
+  const REPULSE_RADIUS_PX = 110;    // dots within this of focused get pushed
+  const REPULSE_STRENGTH  = 24;     // how far they push (px)
+  const OFFSET_LERP       = 0.18;   // per-frame approach to target offset
+  const DEPTH_FADE_NEAR   = -8;     // depth where dots are fully bright
+  const DEPTH_FADE_FAR    =  6;     // depth where dots fade out
+
+  // World-space camera position scratch
+  const _camPos = new THREE.Vector3();
+  const _toPt   = new THREE.Vector3();
+  const _proj   = new THREE.Vector3();
+
+  function setDetail(label, region, desc) {
+    if (label) {
+      const [eyebrow, body] = copyFor({ label, region, desc });
+      dtEye.textContent   = eyebrow;
+      dtTitle.textContent = label;
+      dtBody.textContent  = body;
+      detail.classList.add('is-on');
+    } else {
+      detail.classList.remove('is-on');
+    }
+  }
+
+  // Manual drag-to-rotate state. We track an "angle" that auto-orbits when
+  // idle and is overridden by the user during drag. After drag release the
+  // auto-orbit picks up from wherever they left it (no snap-back).
+  let currentAngle    = 0;
+  let isDragging      = false;
+  let dragStartX      = 0;
+  let dragStartAngle  = 0;
+  let lastTickTime    = performance.now();
+  const DRAG_RAD_PER_PX = 0.0055;
+
+  function tick() {
+    const now = performance.now();
+    const dt  = (now - lastTickTime) / 1000;
+    lastTickTime = now;
+    const t   = (now - t0) / 1000;
+
+    // ---- Advance the angle ----
+    if (!isDragging) {
+      currentAngle -= orbit.speed * dt;
+    }
+    const a = currentAngle;
+    const h = (orbit.h_min + orbit.h_max) * 0.5
+            + Math.sin(t * 0.18) * (orbit.h_max - orbit.h_min) * 0.5;
+    cam.position.set(
+      Math.cos(a) * orbit.radius,
+      Math.sin(a) * orbit.radius,
+      h
+    );
+    cam.lookAt(lookAt);
+    cam.updateMatrixWorld();
+
+    if (dots.length) {
+      // ---- Project every point through the SAME camera ----
+      const w = canvas.clientWidth, hh = canvas.clientHeight;
+      cam.getWorldPosition(_camPos);
+
+      for (let i = 0; i < dots.length; i++) {
+        const d = dots[i];
+        // Back-face cull: surface normal vs. camera-to-point direction.
+        // If normal points away from camera (n · (cam - p) < threshold), hide.
+        _toPt.subVectors(_camPos, d.p);
+        const facing = d.n.dot(_toPt.clone().normalize());
+        if (facing <= 0.05) {
+          if (d.visible) { d.el.classList.add('is-hidden'); d.visible = false; }
+          continue;
+        }
+
+        // World -> NDC -> pixel
+        _proj.copy(d.p).project(cam);
+        // Behind camera or off-screen?
+        if (_proj.z < -1 || _proj.z > 1) {
+          if (d.visible) { d.el.classList.add('is-hidden'); d.visible = false; }
+          continue;
+        }
+        const sx = ( _proj.x * 0.5 + 0.5) * w;
+        const sy = (-_proj.y * 0.5 + 0.5) * hh;
+
+        d.sx = sx; d.sy = sy;
+        d.depth = _proj.z;
+        if (!d.visible) { d.el.classList.remove('is-hidden'); d.visible = true; }
+      }
+
+      // ---- Pick focused dot (nearest visible to mouse, within HIT_RADIUS) ----
+      let newFocus = -1;
+      if (mActive) {
+        let bestD2 = HIT_RADIUS_PX * HIT_RADIUS_PX;
+        for (let i = 0; i < dots.length; i++) {
+          const d = dots[i];
+          if (!d.visible) continue;
+          const dx = d.sx - mx, dy = d.sy - my;
+          const d2 = dx*dx + dy*dy;
+          if (d2 < bestD2) { bestD2 = d2; newFocus = i; }
+        }
+      }
+      if (newFocus !== focusedId) {
+        if (focusedId >= 0 && dots[focusedId]) dots[focusedId].el.classList.remove('is-focus');
+        focusedId = newFocus;
+        if (focusedId >= 0) {
+          const d = dots[focusedId];
+          d.el.classList.add('is-focus');
+          setDetail(d.label, d.region, d.desc);
+        } else {
+          setDetail(null);
+        }
+      }
+
+      // ---- Repulsion targets ----
+      if (focusedId >= 0) {
+        const f = dots[focusedId];
+        for (let i = 0; i < dots.length; i++) {
+          const d = dots[i];
+          if (!d.visible || i === focusedId) {
+            d.oxT = 0; d.oyT = 0;
+            continue;
+          }
+          const dx = d.sx - f.sx, dy = d.sy - f.sy;
+          const dist = Math.hypot(dx, dy);
+          if (dist > REPULSE_RADIUS_PX || dist < 0.001) {
+            d.oxT = 0; d.oyT = 0;
+          } else {
+            const k = (1 - dist / REPULSE_RADIUS_PX);
+            const force = REPULSE_STRENGTH * k * k;
+            d.oxT = (dx / dist) * force;
+            d.oyT = (dy / dist) * force;
+          }
+        }
+        // Focused dot pulls slightly toward cursor for that "magnet" feel
+        f.oxT = (mx - f.sx) * 0.12;
+        f.oyT = (my - f.sy) * 0.12;
+      } else {
+        for (let i = 0; i < dots.length; i++) { dots[i].oxT = 0; dots[i].oyT = 0; }
+      }
+
+      // ---- Lerp + place + flip + depth fade ----
+      for (let i = 0; i < dots.length; i++) {
+        const d = dots[i];
+        if (!d.visible) continue;
+        d.ox += (d.oxT - d.ox) * OFFSET_LERP;
+        d.oy += (d.oyT - d.oy) * OFFSET_LERP;
+        const px = d.sx + d.ox, py = d.sy + d.oy;
+        d.el.style.left = px + 'px';
+        d.el.style.top  = py + 'px';
+
+        // Depth-based subtle fade so backside-leaning dots don't yell
+        const dn = (d.depth - DEPTH_FADE_NEAR) / (DEPTH_FADE_FAR - DEPTH_FADE_NEAR);
+        const faded = dn > 0.55 && i !== focusedId;
+        if (faded !== d.el.classList.contains('is-faded')) {
+          d.el.classList.toggle('is-faded', faded);
+        }
+      }
+    }
+
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  // --------------------------- 8. Mouse / touch ---------------------------
+  // Set --mx/--my on the hero root so all masked layers (splat-wrap, dots,
+  // cursor ring) share the same cursor-tracked position via CSS inheritance.
+  const heroEl = document.getElementById('lxh-hero');
+  function setMouse(x, y) {
+    mx = x; my = y; mActive = true;
+    heroEl.style.setProperty('--mx', x + 'px');
+    heroEl.style.setProperty('--my', y + 'px');
+    cursor.classList.add('is-on');
+    if (hint && !hint.classList.contains('is-off')) hint.classList.add('is-off');
+  }
+  stage.addEventListener('mousemove', (e) => {
+    const r = stage.getBoundingClientRect();
+    setMouse(e.clientX - r.left, e.clientY - r.top);
+    if (isDragging) {
+      const dx = e.clientX - dragStartX;
+      // Negative so dragging right rotates the home leftward (natural
+      // "I'm pushing the model" feel — same convention as Three.js OrbitControls).
+      currentAngle = dragStartAngle - dx * DRAG_RAD_PER_PX;
+    }
+  });
+  stage.addEventListener('mouseenter', (e) => {
+    const r = stage.getBoundingClientRect();
+    setMouse(e.clientX - r.left, e.clientY - r.top);
+  });
+  // Drag-to-rotate: mousedown starts a drag, window mouseup ends it
+  // (window so releasing outside the hero still ends the drag cleanly).
+  stage.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    isDragging = true;
+    dragStartX = e.clientX;
+    dragStartAngle = currentAngle;
+    stage.style.cursor = 'grabbing';
+    e.preventDefault();
+  });
+  window.addEventListener('mouseup', () => {
+    if (isDragging) {
+      isDragging = false;
+      stage.style.cursor = '';
+    }
+  });
+  stage.addEventListener('mouseleave', () => {
+    mActive = false; mx = -9999; my = -9999;
+    // Push the cursor center far off-screen so the radial gradients on the
+    // occluder + dots mask both fall fully out of the visible area:
+    //   - occluder: transparent everywhere -> splat fully visible
+    //   - dots mask: opaque region offscreen -> all dots hidden
+    heroEl.style.setProperty('--mx', '-500px');
+    heroEl.style.setProperty('--my', '-500px');
+    cursor.classList.remove('is-on');
+  });
+  let touchTimer = null;
+  let touchDragStartX = 0;
+  let touchDragStartAngle = 0;
+  let touchIsDragging = false;
+  function handleTouch(e) {
+    if (!e.touches || !e.touches.length) return;
+    const r = stage.getBoundingClientRect();
+    const T = e.touches[0];
+    setMouse(T.clientX - r.left, T.clientY - r.top);
+    if (touchIsDragging) {
+      const dx = T.clientX - touchDragStartX;
+      currentAngle = touchDragStartAngle - dx * DRAG_RAD_PER_PX;
+    }
+    clearTimeout(touchTimer);
+    touchTimer = setTimeout(() => {
+      mActive = false; mx = -9999; my = -9999;
+      heroEl.style.setProperty('--mx', '-500px');
+      heroEl.style.setProperty('--my', '-500px');
+      cursor.classList.remove('is-on');
+    }, 3000);
+  }
+  stage.addEventListener('touchstart', (e) => {
+    if (e.touches && e.touches.length) {
+      touchIsDragging = true;
+      touchDragStartX = e.touches[0].clientX;
+      touchDragStartAngle = currentAngle;
+    }
+    handleTouch(e);
+  }, { passive: true });
+  stage.addEventListener('touchmove',  handleTouch, { passive: true });
+  stage.addEventListener('touchend',   () => { touchIsDragging = false; }, { passive: true });
+  stage.addEventListener('touchcancel',() => { touchIsDragging = false; }, { passive: true });
+
+  // Expose for debugging
+  window.__lxh = { viewer, cam, dots, cloud };
+})();
+</script>

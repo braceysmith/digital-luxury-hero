@@ -1,0 +1,4 @@
+*.bak
+*.precrop.bak
+.DS_Store
+Thumbs.db
