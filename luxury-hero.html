@@ -99,11 +99,43 @@
         transparent var(--lxh-radius));
   }
 
-  /* --- LAYER 3: dot cloud — visible only inside the cursor circle --- */
-  .lxh-dots {
+  /* --- LAYER 3a: edge web — thin faint lines connecting each detail point
+         to its 3 nearest 3D neighbors. Same inverse cursor mask as the dots
+         so the web only appears inside the reveal circle, where the dots
+         are also visible. SVG so the strokes stay crisp regardless of
+         pixel ratio. --- */
+  .lxh-edges {
     position: absolute; inset: 0;
     pointer-events: none;
     z-index: 3;
+    -webkit-mask-image:
+      radial-gradient(circle var(--lxh-radius) at var(--mx, -500px) var(--my, -500px),
+        #000 0,
+        #000 calc(var(--lxh-radius) - var(--lxh-feather)),
+        transparent var(--lxh-radius));
+    mask-image:
+      radial-gradient(circle var(--lxh-radius) at var(--mx, -500px) var(--my, -500px),
+        #000 0,
+        #000 calc(var(--lxh-radius) - var(--lxh-feather)),
+        transparent var(--lxh-radius));
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+  }
+  .lxh-edges svg { display: block; width: 100%; height: 100%; }
+  .lxh-edges path {
+    fill: none;
+    stroke: var(--lxh-navy);
+    stroke-width: 0.6;
+    stroke-opacity: 0.18;        /* faint */
+    stroke-linecap: round;
+  }
+
+  /* --- LAYER 3b: dot cloud — visible only inside the cursor circle.
+         Drawn on top of the edges so the pips sit over the line endpoints. --- */
+  .lxh-dots {
+    position: absolute; inset: 0;
+    pointer-events: none;
+    z-index: 4;
     -webkit-mask-image:
       radial-gradient(circle var(--lxh-radius) at var(--mx, -500px) var(--my, -500px),
         #000 0,
@@ -121,7 +153,7 @@
   /* --- LAYER 3: cursor reveal ring (visual indicator of the hole) --- */
   .lxh-cursor {
     position: absolute;
-    z-index: 4;
+    z-index: 5;
     width: calc(var(--lxh-radius) * 2);
     height: calc(var(--lxh-radius) * 2);
     border: 1px solid rgba(26, 40, 71, 0.35);
@@ -372,7 +404,14 @@
     <!-- LAYER 2: cream occluder — only visible (cream) inside the cursor disc,
          erasing the splat there. Transparent everywhere else. -->
     <div class="lxh-occluder" id="lxh-occluder"></div>
-    <!-- LAYER 3: dot cloud — visible only inside the cursor disc -->
+    <!-- LAYER 3a: connecting edge web — thin faint lines between dots,
+         visible only inside the cursor disc -->
+    <div class="lxh-edges" id="lxh-edges">
+      <svg id="lxh-edges-svg" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+        <path id="lxh-edges-path" d=""/>
+      </svg>
+    </div>
+    <!-- LAYER 3b: dot cloud — visible only inside the cursor disc -->
     <div class="lxh-dots" id="lxh-dots"></div>
     <!-- LAYER 4: cursor reveal ring (decorative) -->
     <div class="lxh-cursor" id="lxh-cursor"></div>
@@ -589,6 +628,37 @@
     });
   }
 
+  // -------- Pre-compute the connecting web (each point -> 3 nearest in 3D)
+  // O(n^2) is fine for n=320. We dedupe so the same edge isn't drawn twice
+  // even if both endpoints picked each other as a nearest neighbor. The
+  // resulting `edges` array is iterated each frame to update the SVG path.
+  const EDGE_K = 3;
+  const edges = [];
+  if (dots.length > 1) {
+    const seen = new Set();
+    const tmp = [];
+    for (let i = 0; i < dots.length; i++) {
+      tmp.length = 0;
+      const pi = dots[i].p;
+      for (let j = 0; j < dots.length; j++) {
+        if (j === i) continue;
+        tmp.push({ j, d: pi.distanceTo(dots[j].p) });
+      }
+      tmp.sort((a, b) => a.d - b.d);
+      for (let k = 0; k < EDGE_K && k < tmp.length; k++) {
+        const j = tmp[k].j;
+        const a = Math.min(i, j), b = Math.max(i, j);
+        const key = a * 100000 + b;
+        if (!seen.has(key)) {
+          seen.add(key);
+          edges.push([a, b]);
+        }
+      }
+    }
+    console.log(`[lxh] computed ${edges.length} edges across ${dots.length} dots`);
+  }
+  const edgesPath = document.getElementById('lxh-edges-path');
+
   // --------------------------- 7. Animation ------------------------------
   const t0 = performance.now();
   let mx = -9999, my = -9999, mActive = false;
@@ -739,6 +809,9 @@
         const px = d.sx + d.ox, py = d.sy + d.oy;
         d.el.style.left = px + 'px';
         d.el.style.top  = py + 'px';
+        // Stash final on-screen pixel coords so the edge-web pass can read them.
+        d.px = px;
+        d.py = py;
 
         // Depth-based subtle fade so backside-leaning dots don't yell
         const dn = (d.depth - DEPTH_FADE_NEAR) / (DEPTH_FADE_FAR - DEPTH_FADE_NEAR);
@@ -746,6 +819,20 @@
         if (faded !== d.el.classList.contains('is-faded')) {
           d.el.classList.toggle('is-faded', faded);
         }
+      }
+
+      // ---- Update connecting web (single SVG path with all visible edges) ----
+      if (edgesPath && edges.length) {
+        let pathData = '';
+        for (let e = 0; e < edges.length; e++) {
+          const a = dots[edges[e][0]];
+          const b = dots[edges[e][1]];
+          if (!a.visible || !b.visible) continue;
+          pathData +=
+            'M' + a.px.toFixed(1) + ' ' + a.py.toFixed(1) +
+            'L' + b.px.toFixed(1) + ' ' + b.py.toFixed(1);
+        }
+        edgesPath.setAttribute('d', pathData);
       }
     }
 
