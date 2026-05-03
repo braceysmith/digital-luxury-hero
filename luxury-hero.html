@@ -26,12 +26,17 @@
 -->
 <style>
   :root {
-    --lxh-navy:    #1a2847;
-    --lxh-orange:  #ff6b35;
+    /* Frazier-Homes-aligned palette: deep navy on a warm cream, with a
+       restrained brushed-gold accent. No orange — Frazier's site is
+       essentially monochrome navy + photography. */
+    --lxh-navy:    #1c3151;
+    --lxh-navy-2:  #142340;     /* deeper navy for hovers / shadows */
+    --lxh-gold:    #b89868;     /* warm brushed-gold (used very sparingly) */
     --lxh-white:   #ffffff;
-    --lxh-cream:   #faf7f2;
-    --lxh-radius:  95px;      /* reveal-hole outer radius */
-    --lxh-feather: 10px;      /* width of soft falloff zone — sharper edge per Bracey's request */
+    --lxh-cream:   #f6f1e8;     /* slightly warmer than off-white */
+    --lxh-ink:     rgba(28, 49, 81, 0.78);
+    --lxh-radius:  95px;        /* reveal-hole outer radius */
+    --lxh-feather: 10px;        /* width of soft falloff zone */
   }
 
   .lxh-hero {
@@ -134,7 +139,7 @@
     inset: 50% auto auto 50%;
     width: 4px; height: 4px;
     margin: -2px 0 0 -2px;
-    background: var(--lxh-orange);
+    background: var(--lxh-navy);
     border-radius: 50%;
   }
   .lxh-cursor.is-on { opacity: 1; }
@@ -151,8 +156,8 @@
     width: 4px; height: 4px;
     margin: -2px 0 0 -2px;
     border-radius: 50%;
-    background: var(--lxh-orange);
-    box-shadow: 0 0 0 1px rgba(255,255,255,0.6), 0 0 6px rgba(255,107,53,0.4);
+    background: var(--lxh-navy);
+    box-shadow: 0 0 0 1px rgba(246,241,232,0.85), 0 0 6px rgba(28,49,81,0.4);
     transition: width 220ms cubic-bezier(.2,.7,.2,1.4),
                 height 220ms cubic-bezier(.2,.7,.2,1.4),
                 margin 220ms cubic-bezier(.2,.7,.2,1.4),
@@ -163,7 +168,8 @@
   .lxh-dot.is-focus .lxh-dot__pip {
     width: 14px; height: 14px;
     margin: -7px 0 0 -7px;
-    box-shadow: 0 0 0 2px rgba(255,255,255,0.9), 0 0 18px rgba(255,107,53,0.65);
+    background: var(--lxh-gold);
+    box-shadow: 0 0 0 2px rgba(246,241,232,1), 0 0 18px rgba(184,152,104,0.55);
   }
   .lxh-dot__label {
     /* Center the label horizontally above the pip. translate(-50%) pulls it
@@ -204,8 +210,8 @@
   }
   .lxh-detail.is-on { opacity: 1; transform: translateY(0); }
   .lxh-detail__eyebrow {
-    font-size: 10px; letter-spacing: 3px; text-transform: uppercase;
-    color: var(--lxh-orange);
+    font-size: 10px; letter-spacing: 3.5px; text-transform: uppercase;
+    color: var(--lxh-gold);
     font-weight: 600;
     margin-bottom: 8px;
   }
@@ -216,41 +222,55 @@
     font-size: 32px;
     line-height: 1.1;
     margin: 0 0 10px;
+    color: var(--lxh-navy);
   }
   .lxh-detail__body {
     font-size: 13px;
     line-height: 1.55;
     margin: 0;
-    color: rgba(26,40,71,0.78);
+    color: var(--lxh-ink);
   }
 
-  /* --- headline --- */
+  /* --- headline (Frazier-styled — large dramatic italic serif) --- */
   .lxh-headline {
     position: absolute;
     z-index: 5;
-    top: 6vh;
+    top: 7vh;
     left: 5vw;
+    right: 5vw;
     pointer-events: none;
     color: var(--lxh-navy);
     font-family: 'Cormorant Garamond', 'Playfair Display', 'Didot', Georgia, serif;
-    font-weight: 300;
+    font-weight: 400;
     font-style: italic;
-    font-size: clamp(30px, 4.6vw, 64px);
-    line-height: 1.05;
-    letter-spacing: 0.5px;
+    font-size: clamp(34px, 5.4vw, 72px);
+    line-height: 1.04;
+    letter-spacing: 0.3px;
     margin: 0;
+    max-width: 12ch;
   }
-  .lxh-headline em { font-style: italic; font-weight: 400; }
+  .lxh-headline em { font-style: italic; font-weight: 500; }
   .lxh-eyebrow {
     display: block;
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: 'Helvetica Neue', 'Inter', Arial, sans-serif;
     font-style: normal;
     font-weight: 600;
     font-size: 11px;
-    letter-spacing: 4px;
+    letter-spacing: 4.5px;
     text-transform: uppercase;
-    color: var(--lxh-orange);
-    margin-bottom: 14px;
+    color: var(--lxh-gold);
+    margin-bottom: 18px;
+  }
+  .lxh-subhead {
+    display: block;
+    margin-top: 14px;
+    font-family: 'Cormorant Garamond', 'Playfair Display', 'Didot', Georgia, serif;
+    font-style: italic;
+    font-weight: 300;
+    font-size: clamp(15px, 1.4vw, 19px);
+    color: var(--lxh-ink);
+    letter-spacing: 0.3px;
+    max-width: 36ch;
   }
 
   .lxh-hint {
@@ -266,6 +286,66 @@
   }
   .lxh-hint.is-off { opacity: 0; }
 
+  /* --- Splat loading indicator. Centered overlay shown until the .ply
+         finishes parsing; fades out once the viewer starts. The ring is a
+         pure-CSS conic gradient that rotates; the percent is updated by JS
+         from the splat viewer's progress callback. --- */
+  .lxh-loader {
+    position: absolute; z-index: 6;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    pointer-events: none;
+    color: var(--lxh-navy);
+    background: var(--lxh-cream);
+    transition: opacity 480ms ease, visibility 480ms ease;
+    /* a thin gold hairline at top + bottom recalls Frazier's editorial feel */
+    border-top:    1px solid rgba(184,152,104,0.0);
+    border-bottom: 1px solid rgba(184,152,104,0.0);
+  }
+  .lxh-loader.is-off {
+    opacity: 0;
+    visibility: hidden;
+  }
+  .lxh-loader__ring {
+    width: 56px; height: 56px;
+    border-radius: 50%;
+    /* A 3px ring with a moving conic-gradient sweep that goes around once
+       per 1.4s. Looks at home next to the editorial headline type. */
+    background:
+      conic-gradient(from 0deg, transparent 0deg, var(--lxh-navy) 360deg);
+    -webkit-mask: radial-gradient(circle, transparent 22px, #000 23px, #000 28px, transparent 29px);
+            mask: radial-gradient(circle, transparent 22px, #000 23px, #000 28px, transparent 29px);
+    animation: lxh-spin 1.4s linear infinite;
+  }
+  @keyframes lxh-spin {
+    to { transform: rotate(360deg); }
+  }
+  .lxh-loader__text {
+    font-family: 'Cormorant Garamond', 'Playfair Display', 'Didot', Georgia, serif;
+    font-style: italic;
+    font-weight: 300;
+    font-size: 22px;
+    letter-spacing: 0.5px;
+    color: var(--lxh-navy);
+    text-align: center;
+  }
+  .lxh-loader__sub {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-style: normal;
+    font-weight: 600;
+    font-size: 10px;
+    letter-spacing: 4.5px;
+    text-transform: uppercase;
+    color: var(--lxh-gold);
+    opacity: 0.95;
+    min-width: 56px;        /* keep stable layout while % updates */
+    text-align: center;
+  }
+
   @media (max-width: 720px) {
     .lxh-headline { top: 4vh; left: 6vw; right: 6vw; font-size: 30px; }
     .lxh-eyebrow  { font-size: 10px; letter-spacing: 3px; }
@@ -278,6 +358,7 @@
   <h1 class="lxh-headline">
     <span class="lxh-eyebrow">Every Detail Considered</span>
     A New Era of <em>Luxury</em>
+    <span class="lxh-subhead">Fully custom. Never templated. Never repeated.</span>
   </h1>
 
   <div class="lxh-stage" id="lxh-stage">
@@ -304,6 +385,12 @@
   </aside>
 
   <div class="lxh-hint" id="lxh-hint">Move · over · the · home · to · inspect</div>
+
+  <div class="lxh-loader" id="lxh-loader" role="status" aria-live="polite">
+    <div class="lxh-loader__ring"></div>
+    <div class="lxh-loader__text">Rendering your home</div>
+    <div class="lxh-loader__sub" id="lxh-loader-sub">Loading</div>
+  </div>
 </section>
 
 <script type="module">
@@ -355,27 +442,69 @@
     sharedMemoryForWorkers: false,
   });
 
+  // Loader state — hidden once the splat is parsed and the viewer is running.
+  const loaderEl = document.getElementById('lxh-loader');
+  const loaderSub = document.getElementById('lxh-loader-sub');
+  function setLoaderProgress(pct) {
+    if (loaderSub) loaderSub.textContent = pct >= 100 ? 'Almost there' : (pct + '%');
+  }
+  function dismissLoader() {
+    if (loaderEl) loaderEl.classList.add('is-off');
+  }
+
+  // We can't always rely on a progress callback in addSplatScene, so we drive
+  // a manual byte-progress preflight via fetch+ReadableStream and then hand
+  // the bytes to the viewer. Falls back to direct addSplatScene if streaming
+  // isn't supported.
+  async function loadPlyWithProgress(url) {
+    const resp = await fetch(url, { cache: 'no-store' });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const total = parseInt(resp.headers.get('Content-Length') || '0', 10);
+    const reader = resp.body.getReader();
+    const chunks = [];
+    let received = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      if (total) setLoaderProgress(Math.min(99, Math.floor(received * 100 / total)));
+    }
+    setLoaderProgress(100);
+    // Reassemble the bytes and hand a blob URL to the viewer
+    const blob  = new Blob(chunks, { type: 'application/octet-stream' });
+    return URL.createObjectURL(blob);
+  }
+
   let splatLoaded = false;
-  try {
-    await viewer.addSplatScene('./chalet_v2.ply', {
+  async function tryLoad(url) {
+    let blobUrl = null;
+    try {
+      blobUrl = await loadPlyWithProgress(url);
+    } catch (e) {
+      // fall back to letting the viewer fetch directly
+      blobUrl = url;
+    }
+    await viewer.addSplatScene(blobUrl, {
       showLoadingUI: false,
       progressiveLoad: true,
       splatAlphaRemovalThreshold: 5,
     });
     viewer.start();
     splatLoaded = true;
+  }
+  try {
+    await tryLoad('./chalet_v2.ply');
   } catch (e) {
-    console.warn('[lxh] chalet_v2.ply not loaded yet — falling back to chalet.ply if present:', e);
+    console.warn('[lxh] chalet_v2.ply load failed, trying chalet.ply:', e);
     try {
-      await viewer.addSplatScene('./chalet.ply', {
-        showLoadingUI: false, progressiveLoad: true, splatAlphaRemovalThreshold: 5
-      });
-      viewer.start();
-      splatLoaded = true;
+      await tryLoad('./chalet.ply');
     } catch (e2) {
-      console.warn('[lxh] no splat available; dots will still rotate over the cream backdrop:', e2);
+      console.warn('[lxh] no splat available:', e2);
     }
   }
+  // Give the viewer one frame to paint, then fade out the loader.
+  requestAnimationFrame(() => requestAnimationFrame(dismissLoader));
 
   // --------------------------- 3. Camera orbit ----------------------------
   // Orbit parameters MUST stay in lockstep with how the dots are projected.
