@@ -539,8 +539,11 @@
   }
   // Splat preference order: v3 (.splat, compressed, ~7x smaller than .ply
   // and well under GitHub Pages's 100MB file cap), then v2/v1 fallbacks.
+  // Cache-bust query string forces browsers + CDN to refetch when the splat
+  // changes — critical because the filename stays the same across iterations.
+  const SPLAT_VERSION = 'v3.1.4';
   try {
-    await tryLoad('./chalet_v3.splat');
+    await tryLoad('./chalet_v3.splat?v=' + SPLAT_VERSION);
   } catch (e) {
     console.warn('[lxh] chalet_v3.splat load failed, trying chalet_v3.ply:', e);
     try {
