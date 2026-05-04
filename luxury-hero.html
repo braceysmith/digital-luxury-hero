@@ -468,21 +468,14 @@
   window.addEventListener('resize', fit);
 
   // --------------------------- 2. Splat viewer ----------------------------
-  // The v3.3 splat is in Postshot's NATIVE coordinate frame — no transform
-  // applied. Postshot uses Y-up internally and the home reconstructed at
-  // bbox center (0, 0.3, -0.04) with size ~2.9 x 0.97 x 1.81 m. We point
-  // the camera at that center and orbit at a small radius so the home
-  // fills the view. (Dot cloud is in Blender world frame and won't align
-  // perfectly with this test; main goal here is just confirming the splat
-  // renders at all.)
   const viewer = new GaussianSplats3D.Viewer({
     selfDrivenMode: true,
     useBuiltInControls: false,
     rootElement: stage,
     canvas: canvas,
-    cameraUp: [0, 1, 0],                  // Postshot Y-up
-    initialCameraPosition: [3, 0.3, 0],
-    initialCameraLookAt: [0, 0.3, 0],
+    cameraUp: [0, 0, 1],                  // Blender Z-up (world frame)
+    initialCameraPosition: [9, 0, 5],
+    initialCameraLookAt: [0, 0, 1.4],
     sphericalHarmonicsDegree: 2,
     antialiased: true,
     sharedMemoryForWorkers: false,
@@ -532,17 +525,26 @@
   }
 
   let splatLoaded = false;
-  async function tryLoad(url) {
-    // Fire the byte-progress preflight in the background; don't await — the
-    // viewer's own fetch happens in parallel and either races or hits cache.
+  // Race the splat load against a 25s timeout so a malformed splat can't hang
+  // the rest of the page (cursor / dots / orbit attach AFTER this).
+  function tryLoad(url) {
     preflightProgress(url);
-    await viewer.addSplatScene(url, {
-      showLoadingUI: false,
-      progressiveLoad: true,
-      splatAlphaRemovalThreshold: 5,
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('splat load timeout: ' + url)), 25000);
+      viewer.addSplatScene(url, {
+        showLoadingUI: false,
+        progressiveLoad: true,
+        splatAlphaRemovalThreshold: 5,
+      }).then(() => {
+        clearTimeout(timer);
+        viewer.start();
+        splatLoaded = true;
+        resolve();
+      }).catch((e) => {
+        clearTimeout(timer);
+        reject(e);
+      });
     });
-    viewer.start();
-    splatLoaded = true;
   }
   // Splat preference order: newest version first, fall back through older.
   // Each new train gets a versioned filename so URLs stay clean (.splat
@@ -551,7 +553,7 @@
   // Iterate through the splat candidates in preference order; first one
   // that loads wins, the rest are skipped.
   const SPLAT_CANDIDATES = [
-    './chalet_v3_3.splat',
+    './chalet_v3_4.splat',
     './chalet_v3_2.splat',
     './chalet_v3.splat',
     './chalet_v2.ply',
@@ -573,25 +575,26 @@
   // Orbit parameters MUST stay in lockstep with how the dots are projected.
   // Both the splat camera and the dot projection use this same camera obj.
   const cam = viewer.camera;
-  // Postshot's NATIVE frame: home centered around (0, 0.3, -0.04), size
-  // ~2.9m wide, 0.97m tall, 1.81m deep, with Y as the up axis.
-  const lookAt = new THREE.Vector3(0, 0.3, 0);
+  const lookAt = new THREE.Vector3(0, 0, 1.4);   // overridden once points.json loads
   const orbit = {
-    radius: 3.5,                    // small radius — home is only ~3m wide in this frame
-    h_min:  0.6,                    // camera Y (the up axis)
-    h_max:  1.5,
+    radius: 9,
+    h_min:  3.0,
+    h_max:  7.5,
     speed:  0.078,                  // rad/sec
   };
 
   // --------------------------- 4. Load point cloud ------------------------
-  let cloud = null;     // dot cloud disabled in this Postshot-frame test —
-                        // the dots are in Blender world frame and don't align
-                        // with the splat in this mode.
+  let cloud = null;     // { points: [{p,n,region,label,id}], size, look_height, ... }
   try {
     const r = await fetch('./points.json', { cache: 'no-store' });
     if (r.ok) {
       cloud = await r.json();
-      console.log(`[lxh] loaded ${cloud.points.length} surface points (not projected — splat in Postshot native frame)`);
+      if (cloud.look_height) lookAt.set(0, 0, cloud.look_height);
+      if (cloud.size) {
+        orbit.h_min = cloud.size[2] * 0.35;
+        orbit.h_max = cloud.size[2] * 0.95;
+      }
+      console.log(`[lxh] loaded ${cloud.points.length} surface points`);
     } else {
       console.warn('[lxh] points.json not found, dots disabled');
     }
@@ -618,10 +621,7 @@
 
   // --------------------------- 6. Build dot DOM ---------------------------
   let dots = [];   // [{p:Vec3, n:Vec3, label, region, el, pipEl, screen:{x,y}, ox, oy, oxT, oyT, visible}]
-  // TEMP: dots are in Blender world frame, splat is in Postshot native frame.
-  // Disable dot DOM creation while we verify the splat itself renders.
-  const SHOW_DOTS = false;
-  if (SHOW_DOTS && cloud && Array.isArray(cloud.points)) {
+  if (cloud && Array.isArray(cloud.points)) {
     cloud.points.forEach((pt) => {
       const el  = document.createElement('div');
       el.className = 'lxh-dot is-hidden';
@@ -725,12 +725,11 @@
     const a = currentAngle;
     const h = (orbit.h_min + orbit.h_max) * 0.5
             + Math.sin(t * 0.18) * (orbit.h_max - orbit.h_min) * 0.5;
-    // Y-up orbit (Postshot frame): height varies on Y axis, ring on X/Z plane,
-    // centered on lookAt.x and lookAt.z.
+    // Z-up Blender orbit: ring on X/Y plane, height varies on Z.
     cam.position.set(
-      lookAt.x + Math.cos(a) * orbit.radius,
-      h,
-      lookAt.z + Math.sin(a) * orbit.radius
+      Math.cos(a) * orbit.radius,
+      Math.sin(a) * orbit.radius,
+      h
     );
     cam.lookAt(lookAt);
     cam.updateMatrixWorld();
