@@ -19,7 +19,7 @@
       so the focused dot has visual breathing room.
 
   EXPECTED ASSETS in the same folder as this HTML:
-    chalet_v2.ply   — Postshot-trained Gaussian splat
+    chalet_v3.ply   — Postshot-trained Gaussian splat (newest, fallback to v2/v1 if absent)
     points.json     — surface point cloud (written by process_meshy_v2.py)
   Both are loaded by relative URL — no build step.
   ==========================================================================
@@ -537,14 +537,26 @@
     viewer.start();
     splatLoaded = true;
   }
+  // Splat preference order: v3 (.splat, compressed, ~7x smaller than .ply
+  // and well under GitHub Pages's 100MB file cap), then v2/v1 fallbacks.
   try {
-    await tryLoad('./chalet_v2.ply');
+    await tryLoad('./chalet_v3.splat');
   } catch (e) {
-    console.warn('[lxh] chalet_v2.ply load failed, trying chalet.ply:', e);
+    console.warn('[lxh] chalet_v3.splat load failed, trying chalet_v3.ply:', e);
     try {
-      await tryLoad('./chalet.ply');
+      await tryLoad('./chalet_v3.ply');
     } catch (e2) {
-      console.warn('[lxh] no splat available:', e2);
+      console.warn('[lxh] chalet_v3.ply load failed, trying chalet_v2.ply:', e2);
+      try {
+        await tryLoad('./chalet_v2.ply');
+      } catch (e3) {
+        console.warn('[lxh] chalet_v2.ply load failed, trying chalet.ply:', e3);
+        try {
+          await tryLoad('./chalet.ply');
+        } catch (e4) {
+          console.warn('[lxh] no splat available:', e4);
+        }
+      }
     }
   }
   // Whether the splat loaded or not, we're done with the loading screen.
