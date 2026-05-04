@@ -537,19 +537,18 @@
     viewer.start();
     splatLoaded = true;
   }
-  // Splat preference order: v3 (.splat, compressed, ~7x smaller than .ply
-  // and well under GitHub Pages's 100MB file cap), then v2/v1 fallbacks.
-  // Cache-bust query string forces browsers + CDN to refetch when the splat
-  // changes — critical because the filename stays the same across iterations.
-  const SPLAT_VERSION = 'v3.1.4';
+  // Splat preference order: newest version first, fall back through older.
+  // Each new train gets a versioned filename so URLs stay clean (.splat
+  // extension is needed for the viewer to detect the format) AND fresh
+  // fetches happen automatically when the filename changes.
   try {
-    await tryLoad('./chalet_v3.splat?v=' + SPLAT_VERSION);
+    await tryLoad('./chalet_v3_2.splat');
   } catch (e) {
-    console.warn('[lxh] chalet_v3.splat load failed, trying chalet_v3.ply:', e);
+    console.warn('[lxh] chalet_v3_2.splat load failed, trying chalet_v3.splat:', e);
     try {
-      await tryLoad('./chalet_v3.ply');
+      await tryLoad('./chalet_v3.splat');
     } catch (e2) {
-      console.warn('[lxh] chalet_v3.ply load failed, trying chalet_v2.ply:', e2);
+      console.warn('[lxh] chalet_v3.splat load failed, trying chalet_v2.ply:', e2);
       try {
         await tryLoad('./chalet_v2.ply');
       } catch (e3) {
