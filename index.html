@@ -558,8 +558,8 @@
   // Iterate through the splat candidates in preference order; first one
   // that loads wins, the rest are skipped.
   const SPLAT_CANDIDATES = [
-    './chalet_v3_main_sh1.ply', // 35MB — SH degree 1 (drops SH 2-3, keeps lifelike directional shading)
-    './chalet_v3_main.ply',     // 90MB — full SH 3 (most lifelike but slow first-load)
+    './chalet_v3_main.ksplat',  // 16MB — mkkellogg's compressed format, SH 1 preserved
+    './chalet_v3_main_sh1.ply', // 35MB — SH degree 1 PLY (fallback)
     './chalet_v3_5.splat',
     './chalet_v3_4.splat',
     './chalet_v3_2.splat',
