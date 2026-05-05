@@ -498,8 +498,9 @@
     loaderDismissed = true;
     if (loaderEl) loaderEl.classList.add('is-off');
   }
-  // Safety net: never let the loader stick for more than 30s.
-  const LOADER_SAFETY_MS = 30000;
+  // Safety net: never let the loader stick for more than 2 min on a slow
+  // connection. The 90 MB PLY can take 10-30s to download alone.
+  const LOADER_SAFETY_MS = 120000;
   setTimeout(dismissLoader, LOADER_SAFETY_MS);
 
   // Optional byte-progress preflight: fetch the .ply ourselves to drive the %
@@ -525,12 +526,14 @@
   }
 
   let splatLoaded = false;
-  // Race the splat load against a 25s timeout so a malformed splat can't hang
-  // the rest of the page (cursor / dots / orbit attach AFTER this).
+  // Race the splat load against a generous timeout — 90MB PLY needs time to
+  // download + parse on a cold connection. Without `progressiveLoad: true`
+  // the viewer waits for the whole file before showing anything; with it,
+  // partially-loaded splats render as soon as they parse.
   function tryLoad(url) {
     preflightProgress(url);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('splat load timeout: ' + url)), 25000);
+      const timer = setTimeout(() => reject(new Error('splat load timeout: ' + url)), 120000);
       viewer.addSplatScene(url, {
         showLoadingUI: false,
         progressiveLoad: true,
@@ -539,6 +542,8 @@
         clearTimeout(timer);
         viewer.start();
         splatLoaded = true;
+        // Loader can dismiss now — first splat batch is on screen.
+        dismissLoader();
         resolve();
       }).catch((e) => {
         clearTimeout(timer);
